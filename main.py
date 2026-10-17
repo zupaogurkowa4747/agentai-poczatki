@@ -1,7 +1,7 @@
 import subprocess
 import ollama
 import os
-
+import webbrowser
 
 def run_command(command: str) -> str:
     """Wykonuje polecenie w terminalu systemowym i zwraca wynik.
@@ -22,9 +22,30 @@ def run_command(command: str) -> str:
     output = result.stdout if result.returncode == 0 else result.stderr
     return output if output else 'Komenda wykonana pomyślnie (brak tekstu zwrotnego)'
 
-import os
-import subprocess
-import ollama
+def open_app(target: str) -> str:
+    """Otwiera aplikację systemową lub stronę WWW bez blokowania terminala."""
+    print(f"\n[🚀 URUCHAMIANIE] ---> {target}")
+    
+    # Słownik skrótów dla trudnych aplikacji w Windowsie
+    APPS_PATHS = {
+        "roblox": 'Roblox Player',
+        "discord": "discord",
+        "spotify": "spotify",
+        "code": "code"
+    }
+    
+    # Jeśli podano skrót, podmień na pełną ścieżkę
+    target_path = APPS_PATHS.get(target.lower(), target)
+    
+    try:
+        if target.startswith("http://") or target.startswith("https://"):
+            webbrowser.open(target)
+            return f"Otwarto stronę: {target}"
+        
+        subprocess.Popen(f'cmd.exe /c start "" "{target_path}"', shell=True)
+        return f"Uruchomiono aplikację/polecenie: {target_path}"
+    except Exception as e:
+        return f"Błąd uruchamiania {target}: {str(e)}"
 
 def list_files(directory: str = ".") -> str:
     """Wyświetla listę wszystkich plików i folderów w podanym katalogu.
@@ -45,7 +66,6 @@ def read_file(filename: str) -> str:
     Args:
         filename: Nazwa pliku do odczytu (np. 'kalkulator.py').
     """
-
     print(f"\n[🤖 AGENT CHCE ODCZYTAĆ PLIK] ---> {filename}")
 
     try:
@@ -72,26 +92,27 @@ def write_file(filename: str, content: str) -> str:
 
 available_tools = {
     'run_command': run_command,
+    'open_app': open_app,
     'write_file': write_file,
     'read_file': read_file,
     'list_files': list_files
 }
 
-
 def main():
     model_name = 'qwen2.5:3b'
-    print(f"=== AGENT URUCHOMIONY (Model: {model_name}) ===")
+    print(f"=== STARTUP AGENT URUCHOMIONY (Model: {model_name}) ===")
 
     messages = [
         {
             'role': 'system',
-    'content': (
-        'Jesteś zaawansowanym asystentem z dostępem do terminala i systemu plików Windows. '
-        'Zasady pracy z plikami i folderami:\n'
-        '1. Jeśli użytkownik podaje nazwę katalogu, użyj narzędzia list_files, podając ścieżkę (np. "." dla bieżącego folderu, "../NazwaFolderu" dla folderu wyżej, lub pełną ścieżkę absolutną).\n'
-        '2. Nigdy nie używaj read_file na katalogu – read_file służy wyłącznie do odczytu zawartości pojedynczych plików.\n'
-        '3. Jeśli plik lub folder znajduje się na Pulpicie poza bieżącym projektem, użyj pełnej ścieżki lub cofnij się operatorem "../".'
-    )
+            'content': (
+                'Jesteś autonomicznym asystentem startowym w systemie Windows.\n'
+                'Zasady działania:\n'
+                '1. Gdy użytkownik prosi o otwarcie aplikacji (np. Discord, VS Code, Spotify) lub stron WWW (np. YouTube, GitHub), ZAWSZE używaj narzędzia open_app.\n'
+                '2. Możesz wywoływać narzędzie open_app wielokrotnie w jednej odpowiedzi, aby uruchomić zestaw aplikacji jeden po drugim.\n'
+                '3. Jeśli użytkownik podaje nazwę katalogu, użyj list_files (np. "." dla obecnego folderu, "../" dla folderu wyżej).\n'
+                '4. Do odczytu plików używaj read_file, do zapisu write_file, a do poleceń konsolowych run_command.'
+            )
         } 
     ]
 
@@ -105,35 +126,36 @@ def main():
         response = ollama.chat(
             model=model_name,
             messages=messages,
-            tools=[run_command, write_file, read_file, list_files]
+            tools=[run_command, open_app, write_file, read_file, list_files]
         )
+
+        messages.append(response['message'])
 
         if response.get('message', {}).get('tool_calls'):
             for tool in response['message']['tool_calls']:
                 function_name = tool['function']['name']
                 function_args = tool['function']['arguments']
 
-                print(f"\n[⚡ AI chce wywołać funkcję: {function_name}]")
+                print(f"\n[⚡ AI chce wywołać funkcja: {function_name}]")
 
                 if function_name in available_tools:
                     tool_output = available_tools[function_name](**function_args)
-                    print(f"[📤 Wynik z terminala]:\n{tool_output}")
+                    print(f"[📤 Wynik narzędzia]: {tool_output}")
 
-                    messages.append(response['message'])
                     messages.append({
                         'role': 'tool',
                         'content': tool_output,
                         'name': function_name
                     })
 
-                    final_response = ollama.chat(model=model_name, messages=messages)
-                    print(f"\nAI: {final_response['message']['content']}")
-                    messages.append(final_response['message'])
+            # Po wykonaniu wszystkich wywołań narzędzi prosimy model o podsumowanie
+            final_response = ollama.chat(model=model_name, messages=messages)
+            print(f"\nAI: {final_response['message']['content']}")
+            messages.append(final_response['message'])
 
         else:
             content = response['message']['content']
             print(f"\nAI: {content}")
-            messages.append(response['message'])    
 
 
 if __name__ == '__main__':
